@@ -248,8 +248,9 @@ struct fp {
   template <typename Float> explicit FMT_CONSTEXPR fp(Float n) { assign(n); }
 
   template <typename Float>
-  using is_supported = bool_constant<sizeof(Float) == sizeof(uint64_t) ||
-                                     sizeof(Float) == sizeof(uint32_t)>;
+  using is_supported = bool_constant<sizeof(Float) == sizeof(uint32_t) ||
+                                     sizeof(Float) == 2 * sizeof(uint32_t) ||
+                                     std::numeric_limits<Float>::digits == 64>;
 
   // Assigns d to this and return true iff predecessor is closer than successor.
   template <typename Float, FMT_ENABLE_IF(is_supported<Float>::value)>
@@ -258,13 +259,13 @@ struct fp {
     const int num_float_significand_bits =
         detail::num_significand_bits<Float>();
     const uint64_t implicit_bit = 1ULL << num_float_significand_bits;
-    const uint64_t significand_mask = implicit_bit - 1;
-    constexpr bool is_double = sizeof(Float) == sizeof(uint64_t);
-    auto u = bit_cast<conditional_t<is_double, uint64_t, uint32_t>>(n);
+    using carrier_uint = typename dragonbox::float_info<Float>::carrier_uint;
+    const carrier_uint significand_mask = implicit_bit - 1;
+    auto u = bit_cast<carrier_uint>(n);
     f = u & significand_mask;
-    const uint64_t exponent_mask = (~0ULL >> 1) & ~significand_mask;
     int biased_e =
-        static_cast<int>((u & exponent_mask) >> num_float_significand_bits);
+        static_cast<int>((u & exponent_mask<Float>()) >>
+                         dragonbox::float_info<Float>::significand_bits);
     // The predecessor is closer if n is a normalized power of 2 (f == 0) other
     // than the smallest normalized number (biased_e > 1).
     bool is_predecessor_closer = f == 0 && biased_e > 1;
@@ -2167,10 +2168,9 @@ FMT_CONSTEXPR20 inline void format_dragon(fp value, bool is_predecessor_closer,
   // is closer) to make lower and upper integers. This eliminates multiplication
   // by 2 during later computations.
   int shift = is_predecessor_closer ? 2 : 1;
-  uint64_t significand = value.f << shift;
   if (value.e >= 0) {
-    numerator.assign(significand);
-    numerator <<= value.e;
+    numerator.assign(value.f);
+    numerator <<= value.e + shift;
     lower.assign(1);
     lower <<= value.e;
     if (shift != 1) {
@@ -2188,11 +2188,13 @@ FMT_CONSTEXPR20 inline void format_dragon(fp value, bool is_predecessor_closer,
       upper_store <<= 1;
       upper = &upper_store;
     }
-    numerator *= significand;
+    numerator *= value.f;
+    numerator <<= shift;
     denominator.assign(1);
     denominator <<= shift - value.e;
   } else {
-    numerator.assign(significand);
+    numerator.assign(value.f);
+    numerator <<= shift;
     denominator.assign_pow10(exp10);
     denominator <<= shift - value.e;
     lower.assign(1);

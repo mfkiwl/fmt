@@ -1198,7 +1198,7 @@ class utf8_to_utf16 {
 namespace dragonbox {
 
 // Type-specific information that Dragonbox uses.
-template <class T> struct float_info;
+template <typename T, typename Enable = void> struct float_info;
 
 template <> struct float_info<float> {
   using carrier_uint = uint32_t;
@@ -1244,6 +1244,15 @@ template <> struct float_info<double> {
   static const int shorter_interval_tie_lower_threshold = -77;
   static const int shorter_interval_tie_upper_threshold = -77;
   static const int max_trailing_zeros = 16;
+};
+
+// 80-bit extended precision long double.
+template <typename T>
+struct float_info<T, enable_if_t<std::is_same<T, long double>::value &&
+                                 std::numeric_limits<T>::digits == 64>> {
+  using carrier_uint = detail::uint128_t;
+  static const int significand_bits = 64;
+  static const int exponent_bits = 15;
 };
 
 template <typename T> struct decimal_fp {
@@ -1295,11 +1304,14 @@ template <typename T>
 auto snprintf_float(T value, int precision, float_specs specs,
                     buffer<char>& buf) -> int;
 
-template <typename T> constexpr auto promote_float(T value) -> T {
-  return value;
-}
-constexpr auto promote_float(float value) -> double {
-  return static_cast<double>(value);
+template <typename T>
+using promote_float_result =
+    conditional_t<std::is_same<T, float>::value || sizeof(T) == sizeof(double),
+                  double, T>;
+
+template <typename T>
+constexpr auto promote_float(T value) -> promote_float_result<T> {
+  return static_cast<promote_float_result<T>>(value);
 }
 
 template <typename OutputIt, typename Char>
